@@ -1,0 +1,59 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap');
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --font-main: 'DM Sans', sans-serif;
+  --font-mono: 'DM Mono', monospace;
+  --bg: #f8f7f4;
+  --surface: #ffffff;
+  --border: rgba(0, 0, 0, 0.09);
+  --border-md: rgba(0, 0, 0, 0.14);
+  --text-primary: #1a1917;
+  --text-secondary: #6b6a66;
+  --text-hint: #9e9d99;
+  --accent: #1d9e75;
+  --accent-light: #e1f5ee;
+  --danger: #e24b4a;
+  --danger-light: #fcebeb;
+  --warning: #ba7517;
+  --warning-light: #faeeda;
+  --info: #185fa5;
+  --info-light: #e6f1fb;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-main);
+  background: var(--bg);
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+button {
+  font-family: var(--font-main);
+  cursor: pointer;
+}
+
+input,
+select {
+  font-family: var(--font-main);
+}
+
+.app {
+  display: flex;
+  height: 100vh;
+  min-height: 600px;
+}

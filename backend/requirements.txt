@@ -1,0 +1,13 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+apscheduler==3.10.4
+duckdb==1.1.1
+pandas==2.2.2
+requests==2.32.3
+py7zr==0.22.0
+tzdata==2024.1
+polars==1.9.0
+pyarrow==17.0.0
+networkx==3.3
+scikit-learn==1.5.2
+sentence-transformers==3.1.1

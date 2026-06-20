@@ -1,0 +1,263 @@
+"""
+Endpoints REST que consume el panel React.
+
+Estos leen directamente de licitaciones_clean en DuckDB. Nota importante:
+esta tabla es la salida del ETL de limpieza (Licitaciones_públicas.py
+refactorizado), NO todavía las columnas de score de fraude del notebook
+de detección (Deteccion_Licitaciones_Dirigidas.py). Ese segundo pipeline
+de modelado se conecta como una etapa posterior que lee de esta misma
+tabla y escribe sus resultados en una tabla aparte
+(licitaciones_scored_v3) — pendiente de integrar cuando el modelo esté
+corriendo en este mismo backend.
+
+Por ahora estos endpoints expuestos sirven la data limpia tal cual,
+para no bloquear el frontend mientras se conecta el modelo.
+"""
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+from fastapi import APIRouter, HTTPException, Query
+
+from app.config import TABLE_INGESTION_LOG, TABLE_LICITACIONES_CLEAN, TABLE_LICITACIONES_SCORED, TABLE_SCORING_LOG
+from app.db import get_connection
+
+router = APIRouter(prefix="/api", tags=["licitaciones"])
+
+
+def _df_a_registros(df: pd.DataFrame) -> list[dict]:
+    """
+    Convierte un DataFrame a una lista de dicts lista para JSON.
+
+    Dos problemas reales que esto resuelve:
+      1. NaN/Inf (frecuentes en columnas como ratio_adj_estimado o
+         delta_sim_denso cuando faltan embeddings) no son válidos en
+         JSON estándar — json.dumps de FastAPI los rechaza con
+         ValueError en vez de devolver un 500 silencioso o un null
+         razonable.
+      2. Columnas datetime64 (FechaPublicacion, FechaCierre, etc.)
+         quedan como pd.Timestamp dentro del dict, y el encoder JSON
+         por defecto no sabe serializarlas.
+    """
+    df = df.copy()
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = df[col].dt.strftime("%Y-%m-%dT%H:%M:%S")
+        elif pd.api.types.is_float_dtype(df[col]):
+            df[col] = df[col].replace([np.inf, -np.inf], np.nan)
+        df[col] = df[col].astype(object).where(df[col].notnull(), None)
+    return df.to_dict(orient="records")
+
+
+def _tabla_existe(nombre_tabla: str) -> bool:
+    con = get_connection()
+    resultado = con.execute(
+        "SELECT count(*) FROM information_schema.tables WHERE table_name = ?",
+        [nombre_tabla],
+    ).fetchone()
+    return resultado[0] > 0
+
+
+@router.get("/licitaciones")
+def listar_licitaciones(
+    institucion: str | None = Query(None, description="Filtro parcial por nombre de institución"),
+    anio: int | None = Query(None),
+    limit: int = Query(50, le=500),
+    offset: int = Query(0, ge=0),
+):
+    if not _tabla_existe(TABLE_LICITACIONES_CLEAN):
+        raise HTTPException(
+            status_code=503,
+            detail="Aún no hay datos cargados. Esperando la primera corrida del pipeline de ingesta.",
+        )
+
+    con = get_connection()
+    condiciones = []
+    parametros: list = []
+
+    if institucion:
+        condiciones.append("NombreInstitucion ILIKE ?")
+        parametros.append(f"%{institucion}%")
+    if anio:
+        condiciones.append("EXTRACT(YEAR FROM FechaPublicacion) = ?")
+        parametros.append(anio)
+
+    where = f"WHERE {' AND '.join(condiciones)}" if condiciones else ""
+
+    total = con.execute(
+        f"SELECT count(*) FROM {TABLE_LICITACIONES_CLEAN} {where}", parametros
+    ).fetchone()[0]
+
+    filas = con.execute(
+        f"SELECT * FROM {TABLE_LICITACIONES_CLEAN} {where} LIMIT ? OFFSET ?",
+        parametros + [limit, offset],
+    ).fetchdf()
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "resultados": _df_a_registros(filas),
+    }
+
+
+@router.get("/licitaciones/{nro_licitacion}")
+def detalle_licitacion(nro_licitacion: str):
+    if not _tabla_existe(TABLE_LICITACIONES_CLEAN):
+        raise HTTPException(status_code=503, detail="Aún no hay datos cargados.")
+
+    con = get_connection()
+    fila = con.execute(
+        f"SELECT * FROM {TABLE_LICITACIONES_CLEAN} WHERE NroLicitacion = ? LIMIT 1",
+        [nro_licitacion],
+    ).fetchdf()
+
+    if fila.empty:
+        raise HTTPException(status_code=404, detail="Licitación no encontrada")
+
+    return _df_a_registros(fila)[0]
+
+
+@router.get("/ingestion/status")
+def estado_ingesta():
+    """Para que el panel muestre cuándo fue la última actualización de datos."""
+    if not _tabla_existe(TABLE_INGESTION_LOG):
+        return {"corridas": []}
+
+    con = get_connection()
+    filas = con.execute(
+        f"SELECT * FROM {TABLE_INGESTION_LOG} ORDER BY ejecutado_en DESC LIMIT 10"
+    ).fetchdf()
+    return {"corridas": _df_a_registros(filas)}
+
+
+@router.get("/scoring/status")
+def estado_scoring():
+    """Cuándo corrió el scoring por última vez, y con qué métricas."""
+    if not _tabla_existe(TABLE_SCORING_LOG):
+        return {"corridas": []}
+
+    con = get_connection()
+    filas = con.execute(
+        f"SELECT * FROM {TABLE_SCORING_LOG} ORDER BY ejecutado_en DESC LIMIT 10"
+    ).fetchdf()
+    return {"corridas": _df_a_registros(filas)}
+
+
+@router.get("/scored/licitaciones")
+def listar_licitaciones_scored(
+    institucion: str | None = Query(None, description="Filtro parcial por nombre de institución"),
+    anio: int | None = Query(None),
+    score_min: float | None = Query(None, ge=0, le=100),
+    limit: int = Query(50, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """Ranking de licitaciones con score_fraude_v3 — alimenta la vista principal del panel."""
+    if not _tabla_existe(TABLE_LICITACIONES_SCORED):
+        raise HTTPException(
+            status_code=503,
+            detail="Aún no hay scoring calculado. Esperando la primera corrida del pipeline de scoring (03:00 hora Chile).",
+        )
+
+    con = get_connection()
+    condiciones = []
+    parametros: list = []
+
+    if institucion:
+        condiciones.append("Institucion ILIKE ?")
+        parametros.append(f"%{institucion}%")
+    if anio:
+        condiciones.append("anio_publicacion = ?")
+        parametros.append(anio)
+    if score_min is not None:
+        condiciones.append("score_fraude_v3 >= ?")
+        parametros.append(score_min)
+
+    where = f"WHERE {' AND '.join(condiciones)}" if condiciones else ""
+
+    total = con.execute(
+        f"SELECT count(*) FROM {TABLE_LICITACIONES_SCORED} {where}", parametros
+    ).fetchone()[0]
+
+    filas = con.execute(
+        f"SELECT * FROM {TABLE_LICITACIONES_SCORED} {where} "
+        f"ORDER BY score_fraude_v3 DESC LIMIT ? OFFSET ?",
+        parametros + [limit, offset],
+    ).fetchdf()
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "resultados": _df_a_registros(filas),
+    }
+
+
+@router.get("/scored/licitaciones/{nro_licitacion}")
+def detalle_licitacion_scored(nro_licitacion: str):
+    if not _tabla_existe(TABLE_LICITACIONES_SCORED):
+        raise HTTPException(status_code=503, detail="Aún no hay scoring calculado.")
+
+    con = get_connection()
+    fila = con.execute(
+        f"SELECT * FROM {TABLE_LICITACIONES_SCORED} WHERE NroLicitacion = ? LIMIT 1",
+        [nro_licitacion],
+    ).fetchdf()
+
+    if fila.empty:
+        raise HTTPException(status_code=404, detail="Licitación no encontrada")
+
+    return _df_a_registros(fila)[0]
+
+
+@router.get("/scored/instituciones")
+def ranking_instituciones(min_licitaciones: int = Query(10, ge=1)):
+    """Ranking por institución: score promedio, % oferente único, n° de alto riesgo."""
+    if not _tabla_existe(TABLE_LICITACIONES_SCORED):
+        raise HTTPException(status_code=503, detail="Aún no hay scoring calculado.")
+
+    con = get_connection()
+    filas = con.execute(
+        f"""
+        SELECT
+            Institucion AS inst,
+            count(*) AS n_lic,
+            round(avg(score_fraude_v3), 1) AS score_avg,
+            sum(CASE WHEN score_fraude_v3 >= 70 THEN 1 ELSE 0 END) AS n_alto,
+            round(avg(oferente_unico) * 100, 1) AS pct_oferente,
+            round(avg(plazo_corto) * 100, 1) AS pct_plazo
+        FROM {TABLE_LICITACIONES_SCORED}
+        GROUP BY Institucion
+        HAVING count(*) >= ?
+        ORDER BY score_avg DESC
+        """,
+        [min_licitaciones],
+    ).fetchdf()
+    return {"resultados": _df_a_registros(filas)}
+
+
+@router.get("/scored/pares")
+def ranking_pares(min_adjudicaciones: int = Query(5, ge=1)):
+    """Pares institución-proveedor de alta concentración (proveedores cautivos)."""
+    if not _tabla_existe(TABLE_LICITACIONES_SCORED):
+        raise HTTPException(status_code=503, detail="Aún no hay scoring calculado.")
+
+    con = get_connection()
+    filas = con.execute(
+        f"""
+        SELECT
+            Institucion AS inst,
+            proveedor_adjudicado AS prov,
+            count(*) AS n_adj,
+            sum(monto_adjudicado) AS monto,
+            round(avg(score_fraude_v3), 1) AS score,
+            round(max(share_unidad_para_proveedor_t), 3) AS share
+        FROM {TABLE_LICITACIONES_SCORED}
+        WHERE rut_adjudicado IS NOT NULL
+        GROUP BY Institucion, proveedor_adjudicado
+        HAVING count(*) >= ?
+        ORDER BY score DESC, n_adj DESC
+        """,
+        [min_adjudicaciones],
+    ).fetchdf()
+    return {"resultados": _df_a_registros(filas)}

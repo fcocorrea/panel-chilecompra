@@ -1,0 +1,33 @@
+# Docs de sesión y contexto local
+resumen_sesion.md
+CLAUDE.md
+
+# Python
+backend/.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# DuckDB y datos
+backend/data/raw/
+backend/data/staging/
+backend/data/warehouse.duckdb
+backend/data/warehouse.duckdb.wal
+
+# Estado de schedulers
+backend/state.json
+backend/scoring_state.json
+backend/scoring.lock
+
+# Variables de entorno
+.env
+frontend/.env
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# OS
+.DS_Store
+Thumbs.db
