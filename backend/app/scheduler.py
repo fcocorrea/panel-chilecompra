@@ -1,36 +1,37 @@
 """
 Scheduler de la tarea de ingesta, tolerante a fallos de proceso/máquina.
 
-Por qué no es un cron simple:
-  Un cron "cada 5 horas" asume que la máquina vive encendida 24/7. En la
-  etapa de pruebas (confirmado con el usuario) el backend se levanta y
-  apaga manualmente, así que un cron clásico generaría huecos sin
-  ingesta o, peor, ráfagas de ejecuciones perdidas silenciosamente.
+Mismo patrón que app/scoring/scheduler.py: CronTrigger a hora fija (baja
+carga, evita tráfico) + ventana de tolerancia para ponerse al día si el
+backend estuvo apagado durante la corrida programada.
 
 Estrategia:
   1. Al arrancar el proceso (startup de FastAPI), se lee state.json con
      la marca de tiempo de la última corrida exitosa.
-  2. Si nunca corrió, o si ya pasaron >= INGESTION_INTERVAL_HOURS desde
-     la última corrida, se ejecuta la ingesta INMEDIATAMENTE.
-  3. Si no, se programa el próximo run para el tiempo exacto que falta
-     (no se espera ciegamente 5 horas desde el arranque del proceso).
-  4. Cada corrida exitosa actualiza state.json, así que si el proceso se
-     reinicia, retoma el cálculo correctamente en vez de perder el rastro.
-
-En el servidor 24/7 (producción) este mismo código funciona igual de bien
-— simplemente el caso "ya pasó el intervalo" rara vez se dispara porque el
-proceso no se reinicia.
+  2. Si nunca corrió, o si ya pasaron >= INGESTION_MIN_HOURS_BETWEEN_RUNS
+     desde la última corrida, se ejecuta la ingesta INMEDIATAMENTE.
+  3. Se deja además una corrida recurrente vía CronTrigger todos los días
+     a INGESTION_HOUR:INGESTION_MINUTE (hora de Chile).
+  4. Cada corrida exitosa actualiza state.json.
 """
 from __future__ import annotations
 
 import json
 import logging
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 
-from app.config import INGESTION_INTERVAL_HOURS, STATE_PATH
+from app.config import (
+    INGESTION_HOUR,
+    INGESTION_MIN_HOURS_BETWEEN_RUNS,
+    INGESTION_MINUTE,
+    INGESTION_TIMEZONE,
+    STATE_PATH,
+)
 from app.pipeline.downloader import descargar_licitaciones
 from app.pipeline.extractor import extraer_pendientes, limpiar_staging
 from app.pipeline.loader import cargar_a_duckdb
@@ -38,6 +39,7 @@ from app.pipeline.loader import cargar_a_duckdb
 logger = logging.getLogger("scheduler")
 
 _scheduler: AsyncIOScheduler | None = None
+_TZ = ZoneInfo(INGESTION_TIMEZONE)
 
 
 def _leer_estado() -> dict:
@@ -59,12 +61,17 @@ def _ultima_corrida_exitosa() -> datetime | None:
     valor = estado.get("ultima_corrida_exitosa")
     if not valor:
         return None
-    return datetime.fromisoformat(valor)
+    corrida = datetime.fromisoformat(valor)
+    if corrida.tzinfo is None:
+        # state.json de una corrida previa al cambio a CronTrigger, cuando
+        # se guardaba con datetime.now() naive (hora local == hora Chile).
+        corrida = corrida.replace(tzinfo=_TZ)
+    return corrida
 
 
 def _marcar_corrida_exitosa(detalle: dict) -> None:
     estado = _leer_estado()
-    estado["ultima_corrida_exitosa"] = datetime.now().isoformat()
+    estado["ultima_corrida_exitosa"] = datetime.now(_TZ).isoformat()
     estado["ultimo_detalle"] = detalle
     _escribir_estado(estado)
 
@@ -94,7 +101,6 @@ def ejecutar_pipeline_completo() -> None:
     if not carpetas_ok:
         logger.warning("No hay carpetas de staging disponibles; se omite la carga.")
         _marcar_corrida_exitosa({"etapa_final": "extraccion_vacia"})
-        _reprogramar_siguiente()
         return
 
     metricas = cargar_a_duckdb(carpetas_ok)
@@ -110,62 +116,57 @@ def ejecutar_pipeline_completo() -> None:
     }
     _marcar_corrida_exitosa(detalle)
     logger.info("=== Pipeline completo ===")
-    _reprogramar_siguiente()
 
 
-def _segundos_hasta_proxima_corrida() -> float:
+def _debe_correr_ahora() -> bool:
+    """
+    Tolerancia a fallos: si pasaron >= INGESTION_MIN_HOURS_BETWEEN_RUNS
+    desde la última corrida exitosa, hay que correr ya — sin importar si
+    la hora actual es exactamente la programada. Cubre el caso de que el
+    servidor estuvo apagado durante la ventana nocturna.
+    """
     ultima = _ultima_corrida_exitosa()
     if ultima is None:
-        return 0.0  # nunca corrió -> ejecutar ya
-
-    proxima = ultima + timedelta(hours=INGESTION_INTERVAL_HOURS)
-    delta = (proxima - datetime.now()).total_seconds()
-    return max(delta, 0.0)
+        return True
+    horas_transcurridas = (datetime.now(_TZ) - ultima).total_seconds() / 3600
+    return horas_transcurridas >= INGESTION_MIN_HOURS_BETWEEN_RUNS
 
 
 def iniciar_scheduler() -> AsyncIOScheduler:
     """
     Llamado desde el lifespan de FastAPI al arrancar la app.
-    Programa la primera corrida según el tiempo transcurrido desde la
-    última ejecución exitosa, y deja una corrida recurrente cada
-    INGESTION_INTERVAL_HOURS a partir de ahí.
+
+    1. Si ya pasó la ventana de tolerancia desde la última corrida exitosa
+       (o nunca corrió), dispara la ingesta de inmediato.
+    2. Programa la corrida recurrente diaria a INGESTION_HOUR:INGESTION_MINUTE
+       hora de Chile vía CronTrigger.
     """
     global _scheduler
-    _scheduler = AsyncIOScheduler()
+    _scheduler = AsyncIOScheduler(timezone=_TZ)
 
-    espera_seg = _segundos_hasta_proxima_corrida()
-    proxima_ejecucion = datetime.now() + timedelta(seconds=espera_seg)
-
-    logger.info(
-        "Próxima corrida de ingesta programada para %s (en %.1f minutos)",
-        proxima_ejecucion.isoformat(timespec="seconds"),
-        espera_seg / 60,
-    )
+    if _debe_correr_ahora():
+        logger.info("Ingesta atrasada o nunca corrió; se ejecuta de inmediato.")
+        _scheduler.add_job(
+            ejecutar_pipeline_completo,
+            trigger=DateTrigger(run_date=datetime.now(_TZ) + timedelta(seconds=5)),
+            id="ingesta_inicial",
+        )
+    else:
+        logger.info("Última ingesta reciente; se respeta el horario fijo diario.")
 
     _scheduler.add_job(
         ejecutar_pipeline_completo,
-        trigger=DateTrigger(run_date=proxima_ejecucion),
-        id="ingesta_inicial",
+        trigger=CronTrigger(hour=INGESTION_HOUR, minute=INGESTION_MINUTE, timezone=_TZ),
+        id="ingesta_diaria",
     )
+
     _scheduler.start()
-    return _scheduler
-
-
-def _reprogramar_siguiente() -> None:
-    """
-    Tras cada corrida (exitosa o no), programa la siguiente exactamente
-    INGESTION_INTERVAL_HOURS después — en vez de un interval trigger fijo
-    desde el arranque del proceso, que se desincronizaría si el proceso
-    se reinicia entre medio.
-    """
-    if _scheduler is None:
-        return
-    proxima = datetime.now() + timedelta(hours=INGESTION_INTERVAL_HOURS)
-    _scheduler.add_job(
-        ejecutar_pipeline_completo,
-        trigger=DateTrigger(run_date=proxima),
-        id=f"ingesta_{proxima.timestamp()}",
+    logger.info(
+        "Ingesta programada diariamente a las %02d:%02d (%s). Próxima corrida: %s",
+        INGESTION_HOUR, INGESTION_MINUTE, INGESTION_TIMEZONE,
+        _scheduler.get_job("ingesta_diaria").next_run_time,
     )
+    return _scheduler
 
 
 def detener_scheduler() -> None:

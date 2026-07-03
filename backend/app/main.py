@@ -23,6 +23,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router as licitaciones_router
+from app.realtime_scheduler import detener_realtime_scheduler, iniciar_realtime_scheduler
 from app.scheduler import detener_scheduler, iniciar_scheduler
 from app.scoring.scheduler import detener_scoring_scheduler, iniciar_scoring_scheduler
 
@@ -36,9 +37,11 @@ logging.basicConfig(
 async def lifespan(app: FastAPI):
     iniciar_scheduler()
     iniciar_scoring_scheduler()
+    iniciar_realtime_scheduler()
     yield
     detener_scheduler()
     detener_scoring_scheduler()
+    detener_realtime_scheduler()
 
 
 app = FastAPI(

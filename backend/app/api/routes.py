@@ -19,7 +19,13 @@ import numpy as np
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 
-from app.config import TABLE_INGESTION_LOG, TABLE_LICITACIONES_CLEAN, TABLE_LICITACIONES_SCORED, TABLE_SCORING_LOG
+from app.config import (
+    ESTADO_LICITACION_EN_PROCESO,
+    TABLE_INGESTION_LOG,
+    TABLE_LICITACIONES_CLEAN,
+    TABLE_LICITACIONES_SCORED,
+    TABLE_SCORING_LOG,
+)
 from app.db import get_connection
 
 router = APIRouter(prefix="/api", tags=["licitaciones"])
@@ -149,6 +155,9 @@ def listar_licitaciones_scored(
     institucion: str | None = Query(None, description="Filtro parcial por nombre de institución"),
     anio: int | None = Query(None),
     score_min: float | None = Query(None, ge=0, le=100),
+    solo_activas: bool = Query(
+        True, description="Si es true (default), solo muestra licitaciones en proceso (no adjudicadas/cerradas)."
+    ),
     limit: int = Query(50, le=500),
     offset: int = Query(0, ge=0),
 ):
@@ -172,6 +181,9 @@ def listar_licitaciones_scored(
     if score_min is not None:
         condiciones.append("score_fraude_v3 >= ?")
         parametros.append(score_min)
+    if solo_activas:
+        condiciones.append("EstadoLicitacion = ?")
+        parametros.append(ESTADO_LICITACION_EN_PROCESO)
 
     where = f"WHERE {' AND '.join(condiciones)}" if condiciones else ""
 

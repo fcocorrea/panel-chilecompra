@@ -45,11 +45,12 @@ async function request(path, params = {}) {
 }
 
 export const api = {
-  listarLicitaciones: ({ institucion, anio, scoreMin, limit = 50, offset = 0 } = {}) =>
+  listarLicitaciones: ({ institucion, anio, scoreMin, soloActivas = true, limit = 50, offset = 0 } = {}) =>
     request('/api/scored/licitaciones', {
       institucion,
       anio,
       score_min: scoreMin,
+      solo_activas: soloActivas,
       limit,
       offset,
     }),

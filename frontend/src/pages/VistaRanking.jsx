@@ -17,6 +17,7 @@ export default function VistaRanking({ onSelectLicitacion, selectedId, onTotalCh
   const [filtroInst, setFiltroInst] = useState('')
   const [filtroScore, setFiltroScore] = useState(0)
   const [filtroAnio, setFiltroAnio] = useState('')
+  const [soloActivas, setSoloActivas] = useState(true)
   const [page, setPage] = useState(0)
   const [sortAsc, setSortAsc] = useState(false)
 
@@ -32,6 +33,7 @@ export default function VistaRanking({ onSelectLicitacion, selectedId, onTotalCh
         institucion: filtroInst || undefined,
         anio: filtroAnio || undefined,
         scoreMin: filtroScore || undefined,
+        soloActivas,
         limit: PAGE_SIZE,
         offset: page * PAGE_SIZE,
       })
@@ -46,11 +48,11 @@ export default function VistaRanking({ onSelectLicitacion, selectedId, onTotalCh
   useEffect(() => {
     cargar()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtroInst, filtroScore, filtroAnio, page])
+  }, [filtroInst, filtroScore, filtroAnio, soloActivas, page])
 
   useEffect(() => {
     setPage(0)
-  }, [filtroInst, filtroScore, filtroAnio])
+  }, [filtroInst, filtroScore, filtroAnio, soloActivas])
 
   if (loading && !data) return <EstadoCargando mensaje="Cargando licitaciones..." />
   if (error) return <EstadoError error={error} onRetry={cargar} />
@@ -89,6 +91,14 @@ export default function VistaRanking({ onSelectLicitacion, selectedId, onTotalCh
           <option value="2024">2024</option>
           <option value="2025">2025</option>
         </select>
+        <label className="filter-label" style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={soloActivas}
+            onChange={(e) => setSoloActivas(e.target.checked)}
+          />
+          Solo en proceso
+        </label>
         <div className="ml-auto result-count">
           {total} resultado{total !== 1 ? 's' : ''}
         </div>

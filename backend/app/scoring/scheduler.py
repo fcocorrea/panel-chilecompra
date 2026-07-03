@@ -5,18 +5,15 @@ Independiente del scheduler de ingesta (app/scheduler.py): corren en
 paralelo, en el mismo proceso de FastAPI, pero con ciclos de vida
 completamente distintos.
 
-  - Ingesta: cada 5 horas, sin hora fija, tolerante a fallos por intervalo.
-  - Scoring: una vez al día a las 03:00 hora de Chile (tráfico mínimo),
-    tolerante a fallos por ventana de 24h — si el proceso estuvo apagado
-    durante la ventana nocturna, corre apenas vuelve a levantar en vez de
-    esperar silenciosamente al día siguiente.
+  - Ingesta: una vez al día a las 03:00 hora de Chile (tráfico mínimo).
+  - Scoring (reentrenamiento): una vez a la semana, mismo horario de baja
+    carga, tolerante a fallos por ventana semanal — si el proceso estuvo
+    apagado durante la corrida programada, corre apenas vuelve a levantar
+    en vez de esperar silenciosamente a la próxima semana.
 
-Por qué un CronTrigger y no un DateTrigger relativo (como en ingesta):
-el requisito es "todos los días a una HORA FIJA", no "cada N horas desde
-la última corrida" — son dos semánticas distintas. CronTrigger con
-zona horaria explícita (America/Santiago) resuelve correctamente el
-cambio de horario de verano/invierno de Chile sin que tengamos que
-calcularlo a mano.
+CronTrigger con día de semana fijo (SCORING_DAY_OF_WEEK) y zona horaria
+explícita (America/Santiago) resuelve correctamente el cambio de horario
+de verano/invierno de Chile sin que tengamos que calcularlo a mano.
 
 Lock de ejecución: el scoring puede tardar minutos (carga de modelo de
 embeddings, entrenamiento del Isolation Forest). Si por algún motivo dos
@@ -36,6 +33,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 
 from app.config import (
+    SCORING_DAY_OF_WEEK,
     SCORING_HOUR,
     SCORING_MIN_HOURS_BETWEEN_RUNS,
     SCORING_MINUTE,
@@ -132,9 +130,10 @@ def ejecutar_pipeline_scoring() -> None:
 def _debe_correr_ahora() -> bool:
     """
     Tolerancia a fallos: si pasaron >= SCORING_MIN_HOURS_BETWEEN_RUNS
-    desde la última corrida exitosa, hay que correr ya — sin importar
-    si la hora actual es exactamente las 03:00 o no. Esto cubre el caso
-    de que el servidor estuvo apagado durante la ventana nocturna.
+    (una semana, con margen) desde la última corrida exitosa, hay que
+    correr ya — sin importar si es exactamente el día/hora programados.
+    Esto cubre el caso de que el servidor estuvo apagado durante la
+    corrida semanal.
     """
     ultima = _ultima_corrida_exitosa()
     if ultima is None:
@@ -149,8 +148,8 @@ def iniciar_scoring_scheduler() -> AsyncIOScheduler:
 
     1. Si ya pasó la ventana de tolerancia desde la última corrida
        exitosa (o nunca corrió), dispara el scoring de inmediato.
-    2. Programa la corrida recurrente diaria a las 03:00 hora de Chile
-       vía CronTrigger.
+    2. Programa la corrida recurrente semanal (SCORING_DAY_OF_WEEK) a
+       las 03:00 hora de Chile vía CronTrigger.
     """
     global _scoring_scheduler
     _scoring_scheduler = AsyncIOScheduler(timezone=_TZ)
@@ -163,19 +162,21 @@ def iniciar_scoring_scheduler() -> AsyncIOScheduler:
             id="scoring_inicial",
         )
     else:
-        logger.info("Último scoring reciente; se respeta el horario fijo diario.")
+        logger.info("Último scoring reciente; se respeta el horario fijo semanal.")
 
     _scoring_scheduler.add_job(
         ejecutar_pipeline_scoring,
-        trigger=CronTrigger(hour=SCORING_HOUR, minute=SCORING_MINUTE, timezone=_TZ),
-        id="scoring_diario",
+        trigger=CronTrigger(
+            day_of_week=SCORING_DAY_OF_WEEK, hour=SCORING_HOUR, minute=SCORING_MINUTE, timezone=_TZ,
+        ),
+        id="scoring_semanal",
     )
 
     _scoring_scheduler.start()
     logger.info(
-        "Scoring programado diariamente a las %02d:%02d (%s). Próxima corrida: %s",
-        SCORING_HOUR, SCORING_MINUTE, SCORING_TIMEZONE,
-        _scoring_scheduler.get_job("scoring_diario").next_run_time,
+        "Scoring programado semanalmente (%s) a las %02d:%02d (%s). Próxima corrida: %s",
+        SCORING_DAY_OF_WEEK, SCORING_HOUR, SCORING_MINUTE, SCORING_TIMEZONE,
+        _scoring_scheduler.get_job("scoring_semanal").next_run_time,
     )
     return _scoring_scheduler
 

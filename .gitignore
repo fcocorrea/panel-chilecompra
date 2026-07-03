@@ -19,6 +19,7 @@ backend/data/warehouse.duckdb.wal
 backend/state.json
 backend/scoring_state.json
 backend/scoring.lock
+backend/realtime_state.json
 
 # Variables de entorno
 .env
