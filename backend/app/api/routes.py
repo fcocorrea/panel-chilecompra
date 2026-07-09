@@ -248,6 +248,77 @@ def ranking_instituciones(min_licitaciones: int = Query(10, ge=1)):
     return {"resultados": _df_a_registros(filas)}
 
 
+@router.get("/scored/red")
+def red_institucion_proveedor(
+    min_adjudicaciones: int = Query(3, ge=1, description="Mínimo de adjudicaciones por par para incluir la arista"),
+    limit_aristas: int = Query(200, ge=10, le=1000),
+):
+    """Grafo bipartito institución-proveedor (nodos + aristas) para la vista de red."""
+    if not _tabla_existe(TABLE_LICITACIONES_SCORED):
+        raise HTTPException(status_code=503, detail="Aún no hay scoring calculado.")
+
+    con = get_connection()
+    aristas_df = con.execute(
+        f"""
+        SELECT
+            UnidadCompraRUT AS id_inst,
+            Institucion AS label_inst,
+            rut_adjudicado AS id_prov,
+            proveedor_adjudicado AS label_prov,
+            count(*) AS n_adj,
+            sum(monto_adjudicado) AS monto_total,
+            round(avg(score_fraude_v3), 1) AS score_avg,
+            max(comunidad_id) AS comunidad_id
+        FROM {TABLE_LICITACIONES_SCORED}
+        WHERE rut_adjudicado IS NOT NULL AND UnidadCompraRUT IS NOT NULL
+        GROUP BY UnidadCompraRUT, Institucion, rut_adjudicado, proveedor_adjudicado
+        HAVING count(*) >= ?
+        ORDER BY n_adj DESC
+        LIMIT ?
+        """,
+        [min_adjudicaciones, limit_aristas],
+    ).fetchdf()
+
+    if aristas_df.empty:
+        return {"nodos": [], "aristas": []}
+
+    nodos: dict[str, dict] = {}
+    aristas = []
+    for row in aristas_df.itertuples(index=False):
+        inst_id = f"I:{row.id_inst}"
+        prov_id = f"P:{row.id_prov}"
+
+        if inst_id not in nodos:
+            nodos[inst_id] = {
+                "id": inst_id,
+                "tipo": "institucion",
+                "label": row.label_inst,
+                "comunidad_id": int(row.comunidad_id) if pd.notnull(row.comunidad_id) else None,
+                "n_adj": 0,
+            }
+        nodos[inst_id]["n_adj"] += int(row.n_adj)
+
+        if prov_id not in nodos:
+            nodos[prov_id] = {
+                "id": prov_id,
+                "tipo": "proveedor",
+                "label": row.label_prov,
+                "comunidad_id": None,
+                "n_adj": 0,
+            }
+        nodos[prov_id]["n_adj"] += int(row.n_adj)
+
+        aristas.append({
+            "source": inst_id,
+            "target": prov_id,
+            "n_adj": int(row.n_adj),
+            "monto_total": float(row.monto_total) if pd.notnull(row.monto_total) else 0.0,
+            "score_avg": float(row.score_avg) if pd.notnull(row.score_avg) else 0.0,
+        })
+
+    return {"nodos": list(nodos.values()), "aristas": aristas}
+
+
 @router.get("/scored/pares")
 def ranking_pares(min_adjudicaciones: int = Query(5, ge=1)):
     """Pares institución-proveedor de alta concentración (proveedores cautivos)."""

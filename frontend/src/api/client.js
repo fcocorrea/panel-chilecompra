@@ -64,6 +64,9 @@ export const api = {
   rankingPares: ({ minAdjudicaciones = 5 } = {}) =>
     request('/api/scored/pares', { min_adjudicaciones: minAdjudicaciones }),
 
+  redInstitucionProveedor: ({ minAdjudicaciones = 3, limitAristas = 200 } = {}) =>
+    request('/api/scored/red', { min_adjudicaciones: minAdjudicaciones, limit_aristas: limitAristas }),
+
   estadoScoring: () => request('/api/scoring/status'),
 
   estadoIngesta: () => request('/api/ingestion/status'),

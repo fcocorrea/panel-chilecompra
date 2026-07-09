@@ -17,6 +17,7 @@ export default function DetallePanel({ nroLicitacion, onClose }) {
   const [licitacion, setLicitacion] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [copiado, setCopiado] = useState(false)
 
   const cargarDetalle = () => {
     if (!nroLicitacion) return
@@ -31,8 +32,16 @@ export default function DetallePanel({ nroLicitacion, onClose }) {
 
   useEffect(() => {
     cargarDetalle()
+    setCopiado(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nroLicitacion])
+
+  const copiarCodigo = () => {
+    navigator.clipboard.writeText(nroLicitacion).then(() => {
+      setCopiado(true)
+      setTimeout(() => setCopiado(false), 2000)
+    })
+  }
 
   if (!nroLicitacion) {
     return (
@@ -158,13 +167,18 @@ export default function DetallePanel({ nroLicitacion, onClose }) {
       </div>
 
       <div className="detail-section detail-section-last">
+        <button type="button" className="btn primary full-width" onClick={copiarCodigo}>
+          <i className={`ti ${copiado ? 'ti-check' : 'ti-copy'}`} aria-hidden="true" />{' '}
+          {copiado ? 'Código copiado' : `Copiar código (${lic.NroLicitacion})`}
+        </button>
         <a
-          className="btn primary full-width"
-          href={`https://www.mercadopublico.cl/Procurement/Modules/RFB/StepsProcessSearch.aspx?qs=${lic.NroLicitacion}`}
+          className="btn full-width"
+          href="https://www.mercadopublico.cl/Home/BusquedaLicitacion"
           target="_blank"
           rel="noreferrer"
+          style={{ marginTop: 8 }}
         >
-          <i className="ti ti-external-link" aria-hidden="true" /> Ver en ChileCompra
+          <i className="ti ti-external-link" aria-hidden="true" /> Buscar en ChileCompra
         </a>
       </div>
     </div>

@@ -16,7 +16,6 @@ const FLAGS_BADGE = [
 export default function VistaRanking({ onSelectLicitacion, selectedId, onTotalChange }) {
   const [filtroInst, setFiltroInst] = useState('')
   const [filtroScore, setFiltroScore] = useState(0)
-  const [filtroAnio, setFiltroAnio] = useState('')
   const [soloActivas, setSoloActivas] = useState(true)
   const [page, setPage] = useState(0)
   const [sortAsc, setSortAsc] = useState(false)
@@ -31,7 +30,6 @@ export default function VistaRanking({ onSelectLicitacion, selectedId, onTotalCh
     api
       .listarLicitaciones({
         institucion: filtroInst || undefined,
-        anio: filtroAnio || undefined,
         scoreMin: filtroScore || undefined,
         soloActivas,
         limit: PAGE_SIZE,
@@ -48,11 +46,11 @@ export default function VistaRanking({ onSelectLicitacion, selectedId, onTotalCh
   useEffect(() => {
     cargar()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtroInst, filtroScore, filtroAnio, soloActivas, page])
+  }, [filtroInst, filtroScore, soloActivas, page])
 
   useEffect(() => {
     setPage(0)
-  }, [filtroInst, filtroScore, filtroAnio, soloActivas])
+  }, [filtroInst, filtroScore, soloActivas])
 
   if (loading && !data) return <EstadoCargando mensaje="Cargando licitaciones..." />
   if (error) return <EstadoError error={error} onRetry={cargar} />
@@ -83,13 +81,6 @@ export default function VistaRanking({ onSelectLicitacion, selectedId, onTotalCh
           <option value={50}>≥ 50</option>
           <option value={70}>≥ 70</option>
           <option value={85}>≥ 85</option>
-        </select>
-        <span className="filter-label">Año</span>
-        <select className="filter-select" value={filtroAnio} onChange={(e) => setFiltroAnio(e.target.value)}>
-          <option value="">Todos</option>
-          <option value="2023">2023</option>
-          <option value="2024">2024</option>
-          <option value="2025">2025</option>
         </select>
         <label className="filter-label" style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
           <input
