@@ -120,9 +120,9 @@ export default function VistaRanking({ onSelectLicitacion, selectedId, onTotalCh
                 </tr>
               </thead>
               <tbody>
-                {ordenadas.map((lic) => (
+                {ordenadas.map((lic, i) => (
                   <FilaLicitacion
-                    key={lic.NroLicitacion}
+                    key={`${lic.NroLicitacion}-${i}`}
                     lic={lic}
                     selected={lic.NroLicitacion === selectedId}
                     onClick={() => onSelectLicitacion(lic.NroLicitacion)}
