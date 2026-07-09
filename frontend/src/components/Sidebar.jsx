@@ -13,7 +13,7 @@ export default function Sidebar({ activeTab, onChangeTab, totalLicitaciones }) {
       <div className="logo">
         <div className="logo-badge">ChileCompra</div>
         <div className="logo-title">Panel de auditoría</div>
-        <div className="logo-sub">Municipalidades · v3</div>
+        <div className="logo-sub">Municipalidades</div>
       </div>
       <nav className="nav">
         {NAV_ITEMS.map((item) => {
