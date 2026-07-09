@@ -231,17 +231,32 @@ function FilaLicitacion({ lic, selected, onClick }) {
   )
 }
 
+const PAGINAS_POR_BLOQUE = 10
+
 function Paginacion({ page, totalPages, onChange }) {
-  const paginas = Array.from({ length: totalPages }, (_, i) => i)
+  const inicioBloque = Math.floor(page / PAGINAS_POR_BLOQUE) * PAGINAS_POR_BLOQUE
+  const finBloque = Math.min(inicioBloque + PAGINAS_POR_BLOQUE, totalPages)
+  const paginas = Array.from({ length: finBloque - inicioBloque }, (_, i) => inicioBloque + i)
+
   return (
     <div className="pagination">
       Página {page + 1} de {totalPages}
       <div className="pagination-pages">
+        {inicioBloque > 0 && (
+          <div className="page-btn page-btn-nav" onClick={() => onChange(inicioBloque - PAGINAS_POR_BLOQUE)}>
+            &lt;&lt;
+          </div>
+        )}
         {paginas.map((p) => (
           <div key={p} className={`page-btn ${p === page ? 'active' : ''}`} onClick={() => onChange(p)}>
             {p + 1}
           </div>
         ))}
+        {finBloque < totalPages && (
+          <div className="page-btn page-btn-nav" onClick={() => onChange(finBloque)}>
+            &gt;&gt;
+          </div>
+        )}
       </div>
     </div>
   )
