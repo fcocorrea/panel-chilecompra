@@ -32,16 +32,26 @@ src/
 │   ├── VistaRanking.jsx      tabla principal con filtros y paginación
 │   ├── VistaInstituciones.jsx
 │   ├── VistaPares.jsx
-│   └── VistaRed.jsx          placeholder — el grafo D3 real queda pendiente
+│   └── VistaRed.jsx          grafo bipartito institución↔proveedor interactivo (D3: fuerzas, zoom/pan, drag, tooltip, color por comunidad Louvain)
 ├── utils/format.js          color de score, montos, fechas
 └── styles/                   CSS global + por componente (paleta light institucional)
 ```
 
+Dependencias relevantes además de React/Vite: `d3` (fuerzas, zoom/drag y escalas
+para la vista de Red).
+
 ## Qué falta
 
-- **Vista de Red**: el backend ya calcula el grafo bipartito y las comunidades
-  (Louvain), pero la visualización interactiva con D3 todavía no está construida
-  en este panel — hoy es un placeholder honesto.
+- **Filtro de Año en Licitaciones**: se quitó del panel (`VistaRanking.jsx`)
+  porque hoy `licitaciones_clean` solo tiene datos de 2025-2026 — el downloader
+  del backend descarga un solo semestre por diseño y aún no hace backfill
+  histórico (ver `backend/README.md`). Cuando el backend tenga más años
+  cargados, reponer el filtro es trivial (la API ya soporta `anio=`).
+- **Link "Ver en ChileCompra"**: la ficha real de una licitación en
+  `mercadopublico.cl` requiere un token opaco que el sitio genera al buscar
+  (no hay forma pública de construirlo desde `NroLicitacion`), así que
+  `DetallePanel.jsx` ofrece copiar el código + un link a la búsqueda general
+  en vez de un deep link roto.
 - **CORS del backend**: mientras esté en `allow_origins=["*"]` esto funciona desde
   cualquier origen. Antes de exponer el backend fuera de tu máquina, restringe el
   origin en `backend/app/main.py` al dominio real donde viva este frontend.
