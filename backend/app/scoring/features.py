@@ -78,7 +78,7 @@ def parsear_fechas(df: pl.DataFrame) -> pl.DataFrame:
     """Convierte las columnas Fecha* (texto) a datetime real. Sección 4."""
     fecha_cols = [c for c in df.columns if c.startswith("Fecha")]
     return df.with_columns([
-        pl.col(c).str.strptime(pl.Datetime, format="%d-%m-%Y %H:%M:%S", strict=False).alias(c)
+        pl.col(c).str.strptime(pl.Datetime, format="%Y-%m-%d %H:%M:%S", strict=False).alias(c)
         for c in fecha_cols
     ])
 
